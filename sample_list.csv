@@ -1,0 +1,14 @@
+sample_name,short_name,data_type,merged,bigwig_positive,bigwig_negative
+gd7_cic_chipseq_1,,chip_seq,FALSE,/papagianni_PNAS_2017/bigwig/gd7_cic_chipseq_1_normalized.bw,
+gd7_cic_chipseq_2,,chip_seq,FALSE,/papagianni_PNAS_2017/bigwig/gd7_cic_chipseq_2_normalized.bw,
+gd7_wce_1,,chip_seq,FALSE,/papagianni_PNAS_2017/bigwig/gd7_wce_1_normalized.bw,
+gd7_wce_2,,chip_seq,FALSE,/papagianni_PNAS_2017/bigwig/gd7_wce_2_normalized.bw,
+tl_dl_chipseq_1,,chip_seq,FALSE,/papagianni_PNAS_2017/bigwig/toll10b_dl_chipseq_1_normalized.bw,
+tl_dl_chipseq_2,,chip_seq,FALSE,/papagianni_PNAS_2017/bigwig/toll10b_dl_chipseq_2_normalized.bw,
+tl_cic_chipseq_1,,chip_seq,FALSE,/papagianni_PNAS_2017/bigwig/toll10b_cic_chipseq_1_normalized.bw,
+tl_cic_chipseq_2,,chip_seq,FALSE,/papagianni_PNAS_2017/bigwig/toll10b_cic_chipseq_2_normalized.bw,
+tl_wce_1,,chip_seq,FALSE,/papagianni_PNAS_2017/bigwig/toll10b_wce_1_normalized.bw,
+tl_wce_2,,chip_seq,FALSE,/papagianni_PNAS_2017/bigwig/toll10b_wce_2_normalized.bw,
+tl_dl_chipnexus_1,tl_dl_nexus,chip_nexus,FALSE,/papagianni_PNAS_2017/bigwig/toll10b_dl_chipnexus_1_normalized_positive.bw,/papagianni_PNAS_2017/bigwig/toll10b_dl_chipnexus_1_normalized_negative.bw
+gd7_cic_chipnexus_1,gd_cic_nexus,chip_nexus,FALSE,/papagianni_PNAS_2017/bigwig/gd7_cic_chipnexus_1_normalized_positive.bw,/papagianni_PNAS_2017/bigwig/gd7_cic_chipnexus_1_normalized_negative.bw
+tl_cic_chipnexus_1,tl_cic_nexus,chip_nexus,FALSE,/papagianni_PNAS_2017/bigwig/toll10b_cic_chipnexus_1_normalized_positive.bw,/papagianni_PNAS_2017/bigwig/toll10b_cic_chipnexus_1_normalized_negative.bw

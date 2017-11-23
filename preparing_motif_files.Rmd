@@ -1,0 +1,63 @@
+``` {r setup, echo=FALSE, message=FALSE, include=FALSE, error=FALSE}
+library(GenomicRanges, warn.conflicts=F)
+library(rtracklayer)
+library(magrittr)
+library(parallel)
+library(BSgenome.Dmelanogaster.UCSC.dm6)
+
+setwd("/papagianni_PNAS_2017/analysis/")
+options(knitr.figure_dir = "preparing_motif_files")
+
+source("shared_code/knitr_common.r")
+source("shared_code/granges_common.r")
+```
+
+
+# Preparing motif files
+
+**Author:** [Wanqing Shao](mailto:was@stowers.org)
+
+**Generated:** `r format(Sys.time(), "%a %b %d %Y, %I:%M %p")`
+
+Search cic motif (TSAATGAA) in the genome. S stands for C or G. For CBS, allow no mismatch, For AT sites, allow exact 1 mismatch.
+
+Search dl motif (GGRWWTTCC) in the genome. R stands for A or G, W stands for A and T. Allow up to 1 or 2 mismatches. 
+
+```{r eval =F}
+cic_motif <- "TSAATGAA"
+dl_motif <- "GGRWWTTCC"
+
+cic_motif_no_mm_gr <- vmatchPattern(cic_motif, Dmelanogaster, fixed = "subject")
+cic_motif_1_mm_gr <- vmatchPattern(cic_motif, Dmelanogaster, min.mismatch= 1, max.mismatch = 1, fixed = "subject")
+
+dl_motif_1_mm_gr <- vmatchPattern(dl_motif, Dmelanogaster, min.mismatch= 0, max.mismatch = 1, fixed = "subject")
+dl_motif_2_mm_gr <- vmatchPattern(dl_motif, Dmelanogaster, min.mismatch= 0, max.mismatch = 2, fixed = "subject")
+
+selected_chr <- c( "chr2L", "chr2R", "chr3L","chr3R", "chr4", "chrX")
+
+prepare_motif_files <- function(motif_gr){
+  seqinfo(motif_gr) <- seqinfo(Dmelanogaster)
+  seqlevels(motif_gr, pruning.mode="coarse") <- selected_chr
+  motif_gr <- trim(motif_gr)
+  motif_cov <- coverage(motif_gr)
+  motif_pos <- motif_gr[strand(motif_gr) == "+"] %>% coverage()
+  motif_neg <- motif_gr[strand(motif_gr) == "-"] %>% coverage()
+  motif_cl <- list(gr = motif_gr, pos = motif_pos, neg = motif_neg)
+  motif_cl
+}
+
+cic_no_mm_cl <- prepare_motif_files(cic_motif_no_mm_gr)
+cic_1_mm_cl <- prepare_motif_files(cic_motif_1_mm_gr)
+dl_1_mm_cl <- prepare_motif_files(dl_motif_1_mm_gr)
+dl_2_mm_cl <- prepare_motif_files(dl_motif_2_mm_gr)
+
+saveRDS(cic_no_mm_cl, file = "rdata/cic_motif_TSAATGAA_no_mm_cl.rds")
+saveRDS(cic_1_mm_cl, file = "rdata/cic_motif_TSAATGAA_1_mm_only_cl.rds")
+saveRDS(dl_1_mm_cl, file = "rdata/dl_motif_GGRWWTTCC_1_mm_cl.rds")
+saveRDS(dl_2_mm_cl, file = "rdata/dl_motif_GGRWWTTCC_2_mm_cl.rds")
+
+```
+
+```{r echo =F}
+sessionInfo()
+```

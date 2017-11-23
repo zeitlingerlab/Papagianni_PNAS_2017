@@ -1,0 +1,173 @@
+``` {r setup, echo=FALSE, message=FALSE, include=FALSE, error=FALSE}
+library(GenomicRanges, warn.conflicts=F)
+library(magrittr)
+library(parallel)
+library(ggplot2)
+library(plyr)
+library(reshape)
+setwd("/papagianni_PNAS_2017/analysis/")
+options(knitr.figure_dir = "cic_signal_at_known_enhancers")
+
+source("shared_code/knitr_common.r")
+source("shared_code/granges_common.r")
+source("shared_code/ggplot_common.r")
+source("shared_code/metapeak_common.r")
+source("shared_code/sample_common.r")
+
+```
+
+# Cic signal at knwon enhancers 
+
+**Author:** [Wanqing Shao](mailto:was@stowers.org)
+
+**Generated:** `r format(Sys.time(), "%a %b %d %Y, %I:%M %p")`
+
+### Cic and Dorsal ChIP-seq peak calling
+
+The following code was ran in the terminal, Macs2 was used for Dl and Cic ChIP-seq peak calling
+
+```{r eval= F}
+macs2 callpeak -t /papagianni_PNAS_2017/bam/gd7_cic_chipseq_1.bam /papagianni_PNAS_2017/bam/gd7_cic_chipseq_2.bam -c /papagianni_PNAS_2017/bam/gd7_wce_1.bam /papagianni_PNAS_2017/bam/gd7_wce_2.bam -g dm --call-summits --nomodel --extsize 180 -n gd7_cic_chipseq_combined_rep 
+
+macs2 callpeak -t /papagianni_PNAS_2017/bam/tl10b_cic_chipseq_1.bam /papagianni_PNAS_2017/bam/tl10b_cic_chipseq_2.bam -c /papagianni_PNAS_2017/bam/tl10b_wce_1.bam /papagianni_PNAS_2017/bam/tl10b_wce_2.bam -g dm --call-summits --nomodel --extsize 180 -n tl_cic_chipseq_combined_rep 
+
+macs2 callpeak -t /papagianni_PNAS_2017/bam/tl10b_dl_chipseq_1.bam /papagianni_PNAS_2017/bam/tl10b_dl_chipseq_2.bam -c /papagianni_PNAS_2017/bam/tl10b_wce_1.bam /papagianni_PNAS_2017/bam/tl10b_wce_2.bam -g dm --call-summits --nomodel --extsize 180 -n tl_dl_chipseq_combined_rep 
+
+```
+
+### Process ChIP-seq peaks
+
+```{r peak_process}
+chipnexus_samples <- list(gd7_cic = "gd7_cic_chipnexus_1", tl_cic = "tl_cic_chipnexus_1", tl_dl ="tl_dl_chipnexus_1")
+
+valid_chr <- c("chr2L", "chr2R", "chr3L", "chr3R", "chr4", "chrX")
+
+process_peaks <- function(sample){
+  summit <- import(paste0("/papagianni_PNAS_2017/analysis/macs2/",sample, "_chipseq_combined_rep_summits.bed"))
+  chipnexus <- chipnexus_samples[sample] %>% load_bigwig()
+  seqlevels(summit, pruning.mode="coarse") <- valid_chr
+  summit$sig <- nexus_regionSums(resize(summit, 101, "center"), chipnexus)
+  summit_c <- reduce(resize(summit, 201, "center"))
+  summit$overlapping_id <- findOverlaps(query = summit, subject = summit_c) %>% subjectHits
+  summit_o <- summit[order(summit$sig, decreasing = T)]
+  summit_u <- summit_o[!duplicated(summit_o$overlapping_id)]
+  summit_u
+}
+
+summit_list <- cache("processed_chipseq_summit", function(){
+  mclapply(names(chipnexus_samples), process_peaks, mc.cores = 3)
+})
+
+summit_combined <- lapply(summit_list, function(x){
+  gr_r <- resize(x, 201, "center")
+  mcols(gr_r) <- NULL
+  gr_r}) %>% do.call(c, .) %>% reduce() %>% resize(., 201, "center")
+
+calc_sig <- function(sample, gr){
+  nexus <- chipnexus_samples[sample] %>% load_bigwig()
+
+  enrich_df <- data.frame(sig = nexus_regionSums(gr, nexus))
+  colnames(enrich_df) <- sample
+  enrich_df
+}
+
+sig_df <-  cache("factor_signal_at_combined_summit", function(){
+  mclapply(names(chipnexus_samples), function(x)calc_sig(x,summit_combined ), mc.cores = 3) 
+})%>% do.call(cbind, .)
+
+mcols(summit_combined) <- sig_df
+
+
+tss_gr <- get(load("rdata/dme_dm6_fb6.17_tss.gr.RData"))
+summit_tss <- queryHits(findOverlaps(query=summit_combined, subject = tss_gr)) %>% unique()
+summit_combined <- summit_combined[-1 * summit_tss]
+
+summit_combined$id <- 1:length(summit_combined)
+save(summit_combined, file = "rdata/factor_summit_combined_with_signal.RData")
+```
+
+### Prepare known enhancer list
+
+Known enhancer list was downloaded from http://www.oreganno.org/
+
+Previously  identified dv enhancers (Koenecke et al, 2016, Genome Biology) were downloaded from https://static-content.springer.com/esm/art%3A10.1186%2Fs13059-016-1057-2/MediaObjects/13059_2016_1057_MOESM4_ESM.xlsx
+
+```{r prepare_known_enhancer_list}
+all_regulatory <- read.table("./rdata/ORegAnno_dm6_regulatory_region.txt", header = F, sep = "\t", stringsAsFactors = F)
+all_regulatory <- all_regulatory[, c(3, 4, 5, 6, 8,15, 16, 17, 18)]
+colnames(all_regulatory) <- c("outcome","type" , "gene", "fb_g_id", "regulatory_element_symbol", "strand", "chr", "start", "end")
+
+regulatory_region <- subset(all_regulatory, 
+                           (gene %in% c("zen", "tld", "dpp", "hkb", "tll", "ind", "oc", "ems", "slp1", "gt", "btd")) &
+                            type == "REGULATORY REGION")
+
+regulatory_region$strand <- "*"
+regulatory_region.gr <- makeGRangesFromDataFrame(regulatory_region) 
+regulatory_region.gr$gene <- regulatory_region$gene
+
+
+nko_enhancer_gr <- get(load("rdata/nko_identified_dv_enhancer.RData")) %>% resize(., 501, "center")
+nko_selected_enhancer <- nko_enhancer_gr[nko_enhancer_gr$nearest_gene %in% c("Doc2", "shn")]
+nko_mcols <- data.frame(gene = nko_selected_enhancer$nearest_gene)
+mcols(nko_selected_enhancer) <- nko_mcols
+
+known_enhancers <- c(regulatory_region.gr, nko_selected_enhancer)
+```
+
+### Factor signal at known enhancers
+
+```{r factor_signal_at_known_enhancers, fig.height=10, fig.width= 5}
+binding_at_regulatory <- cache("factor_binding_at_enhancer", function(){
+  lapply(known_enhancers, function(x){
+        overlap_df <- findOverlaps(x, summit_combined)
+     if(length(overlap_df) != 0){
+        enrich_df <- data.frame(gene = x$gene[queryHits(overlap_df)],
+                                gd7_cic = summit_combined$gd7_cic[subjectHits(overlap_df)],
+                                tl_cic = summit_combined$tl_cic[subjectHits(overlap_df)],
+                                tl_dl = summit_combined$tl_dl[subjectHits(overlap_df)])
+     }else{
+        enrich_df <- data.frame(gene = x$gene, 
+                                gd7_cic = 0,
+                                tl_cic = 0,
+                                tl_dl = 0)
+     }
+
+    enrich_df
+  })  %>% do.call(rbind, .)
+})
+
+binding_at_regulatory$sum <- rowSums(binding_at_regulatory[, 2:4])
+binding_at_regulatory <- binding_at_regulatory[order(binding_at_regulatory$sum, decreasing = T),]
+selected_ehancer_df <- binding_at_regulatory[!duplicated(binding_at_regulatory$gene),]
+
+
+selected_ehancer_df_m <- melt(selected_ehancer_df, id.vars = c("gene", "sum"))
+selected_ehancer_df_m$gene <- factor(selected_ehancer_df_m$gene, 
+                                     levels = rev(c("zen", "tld", "dpp", "Doc2","shn",
+                                                "hkb", "tll", "ind", "oc", 
+                                                "ems", "slp1", "gt", "btd")))
+
+selected_ehancer_df_m$value <- log2(selected_ehancer_df_m$value)
+selected_ehancer_df_m$value  <- ifelse(selected_ehancer_df_m$value >= quantile(selected_ehancer_df_m$value, 0.85), quantile(selected_ehancer_df_m$value, 0.85),selected_ehancer_df_m$value)
+selected_ehancer_df_m$value[is.infinite(selected_ehancer_df_m$value)] <- min(abs(selected_ehancer_df_m$value))
+selected_ehancer_df_m$variable <- factor(selected_ehancer_df_m$variable, levels = c("tl_dl", "tl_cic", "gd7_cic"))
+
+cic_df <- subset(selected_ehancer_df_m, variable %in% c("tl_cic", "gd7_cic"))
+dl_df <- subset(selected_ehancer_df_m, variable %in% c("tl_dl"))
+
+ggplot(cic_df, aes(x = variable, y = gene, fill = value)) + geom_tile() +
+  scale_fill_gradient2(high = "firebrick", mid = "peachpuff1", low = "snow",midpoint = 5) +
+  xlab("") + ylab("Enhancer") + ggtitle("factor binding at known enhancers") +
+  scale_x_discrete(labels = c("Cic Toll10b", "Cic gd7")) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggplot(dl_df, aes(x = variable, y = gene, fill = value)) + geom_tile() +
+  scale_fill_gradient2(high = "dodgerblue4", mid = "slategray1", low = "snow",midpoint = 5) +
+  xlab("") + ylab("Enhancer") + ggtitle("factor binding at known enhancers") +
+  scale_x_discrete(labels = c("Dl Toll10b")) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  
+```
+
+```{r echo =F}
+sessionInfo()
+```

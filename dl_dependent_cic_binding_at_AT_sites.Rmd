@@ -1,0 +1,191 @@
+``` {r setup, echo=FALSE, message=FALSE, include=FALSE, error=FALSE}
+library(GenomicRanges, warn.conflicts=F)
+library(magrittr)
+library(parallel)
+library(ggplot2)
+library(BSgenome.Dmelanogaster.UCSC.dm6)
+
+setwd("/papagianni_PNAS_2017/analysis/")
+options(knitr.figure_dir = "dl_dependent_cic_binding_at_AT_sites")
+
+source("shared_code/knitr_common.r")
+source("shared_code/granges_common.r")
+source("shared_code/ggplot_common.r")
+source("shared_code/metapeak_common.r")
+source("shared_code/sample_common.r")
+
+```
+
+# Dl dependent cic binding at AT sites
+
+**Author:** [Wanqing Shao](mailto:was@stowers.org)
+
+**Generated:** `r format(Sys.time(), "%a %b %d %Y, %I:%M %p")`
+
+Dissecting the binding pattern of Cic at CBS and AT sites. Testing if Cic binding at AT sites is Dorsal dependent. 
+
+### Calculate Cic and Dorsal ChIP-nexus signal round Cic and Dorsal motifs
+
+```{r calc_signal_around_motif}
+
+samples <- c("tl_dl_nexus", "tl_cic_nexus","gd_cic_nexus") %>% lapply(., load_bigwig)
+names(samples) <- c("tl_dl", "tl_cic", "gd_cic")
+
+motif_gr_list <- list(dl_1mm = readRDS("rdata/dl_motif_GGRWWTTCC_2_mm_cl.rds")$gr,
+                      cic_0mm = readRDS("rdata/cic_motif_TSAATGAA_no_mm_cl.rds")$gr,
+                      cic_1mm = readRDS("rdata/cic_motif_TSAATGAA_1_mm_only_cl.rds")$gr)
+
+motif_with_signal <- cache("motif_with_signal", function(){
+  mclapply(motif_gr_list, function(x){
+  gr_r <- resize(x, 51, "center") %>% trim()
+  all_sig_df <- mclapply(names(samples), function(y){
+    sample_bigwig <- samples[[y]]
+    sig_df <- data.frame(sig = nexus_regionSums(gr_r, sample_bigwig))
+    colnames(sig_df) <- y
+    sig_df
+  }, mc.cores = 3) %>% do.call(cbind, .)
+  mcols(x) <- all_sig_df
+  x$tl_gd_cic_ratio <- x$tl_cic /  x$gd_cic
+  x
+}, mc.cores = 3)
+})
+
+```
+
+### Separate Dorsal-dependent and -independent Cic site
+
+CBS and AT sites with high cic signal were first selected and stored as top Cic regions. 
+
+Top Cic regions were then defined as Dorsal-dependent if high Cic signal is lost in gd7 mutant. Cic regions with comparable signal in gd7 and Toll10b were defined as Dorsal-independent. 
+
+```{r separte_cic_binding_site}
+
+cic_0_motif <- motif_with_signal$cic_0mm
+cic_0_hits <- (cic_0_motif$tl_cic >= cic_0_motif$tl_cic[order(cic_0_motif$tl_cic, decreasing = T)][200]) |
+              (cic_0_motif$gd_cic >= cic_0_motif$gd_cic[order(cic_0_motif$gd_cic, decreasing = T)][200])
+cic_0_top_motif <- cic_0_motif[cic_0_hits]
+cic_0_top_motif$type <- "CBS"
+
+save(cic_0_top_motif, file = "rdata/cic_top_motif_0mm.RData")
+
+cic_0_motif_r <- resize(cic_0_motif, 51, "center")
+strand(cic_0_motif_r)<- "*"
+
+cic_1_motif <- motif_with_signal$cic_1mm
+cic_1_motif <- cic_1_motif[-1 * unique(queryHits(findOverlaps(query = cic_1_motif, subject = cic_0_motif_r)))]
+cic_1_hits <- (cic_1_motif$tl_cic >= cic_1_motif$tl_cic[order(cic_1_motif$tl_cic, decreasing = T)][200]) |
+              (cic_1_motif$gd_cic >= cic_1_motif$gd_cic[order(cic_1_motif$gd_cic, decreasing = T)][200])
+cic_1_top_motif <- cic_1_motif[cic_1_hits]
+cic_1_top_motif$type <- "AT"
+save(cic_1_top_motif, file = "rdata/cic_top_motif_1mm.RData")
+
+cic_motif <- c(cic_0_top_motif,cic_1_top_motif )
+
+cic_high_gd <-cic_motif[log2(cic_motif$tl_gd_cic_ratio) >= -0.2 &log2(cic_motif$tl_gd_cic_ratio) <= 0.2] %>% sort
+cic_low_gd <-cic_motif[log2(cic_motif$tl_gd_cic_ratio) >= 2] %>% sort
+
+save(cic_high_gd, file = "rdata/cic_motif_with_high_cic_in_gd7.RData")
+save(cic_low_gd, file = "rdata/cic_motif_with_low_cic_in_gd7.RData")
+
+low_gd_df <- mcols(cic_low_gd) %>% as.data.frame
+low_gd_df$factor_type <- "Dl-dependent"
+  
+high_gd_df <- mcols(cic_high_gd) %>% as.data.frame
+high_gd_df$factor_type <- "Dl-independent"
+
+sig_df <- rbind(low_gd_df, high_gd_df)
+
+```
+
+### Cic ChIP-nexus profile at Dorsal dependent and independent sites
+
+```{r metapeak}
+cic_high_gd_metapeak <- 
+  mclapply(c("tl_cic_nexus","gd_cic_nexus"), 
+           function(x)get_exo_metapeak(resize(cic_high_gd, 1, "start"), x, upstream = 25, downstream = 26),
+           mc.cores =2) %>% do.call(rbind, .)
+
+cic_low_gd_metapeak <- 
+  mclapply(c("tl_cic_nexus","gd_cic_nexus"), 
+           function(x)get_exo_metapeak(resize(cic_low_gd, 1, "start"), x, upstream = 25, downstream = 26), 
+           mc.cores =2) %>% do.call(rbind, .)
+
+cic_high_gd_metapeak$group <- paste(cic_high_gd_metapeak$sample_name,"Dl-independent")
+cic_low_gd_metapeak$group <- paste(cic_high_gd_metapeak$sample_name,"Dl-dependent")
+
+cic_metapaeak <-  rbind(cic_high_gd_metapeak,cic_low_gd_metapeak)
+cic_metapaeak$group <- factor(cic_metapaeak$group , levels = unique(cic_metapaeak$group ))
+
+plot_exo_metapeak <- function(metapeak, motif_length, name, pos.col, neg.col){
+  x <- ggplot(metapeak, aes(x=tss_distance, y=reads, fill=strand)) + 
+               geom_rect(,xmin=0, xmax=motif_length, ymin = -Inf, ymax = Inf, alpha=0.6, fill= "gray90")+ 
+               geom_area(position="identity") + scale_fill_manual(values=c(pos.col, neg.col)) +
+               ggtitle(name) + 
+               theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), 
+               panel.background = element_blank(), axis.line.x = element_line(colour = "black"),
+               axis.line.y = element_line(colour = "black")) + 
+               xlab("distance from the start of motif (bp)") + 
+               ylab("average RPM")  + facet_wrap(facets = "group", dir = "v" , ncol = 2)
+  print(x)
+}
+
+nothing <- plot_exo_metapeak(cic_metapaeak, 8, "Cic metapeak","#c6331d", "#D05947")
+```
+
+### Cic Motif distribution
+
+Calculate the distribution of Cic CBS and AT sites at Dorsal-dependent and Dorsal-independent sites. 
+
+```{r cic_motif_distribution}
+cic_motif_precent_df <- with(sig_df, data.frame(
+  signal_type = c("Dl-independent", "Dl-independent", "Dl-dependent", "Dl-dependent"),
+  motif_type = c("CBS", "AT", "CBS", "AT"),
+  motif_percent = c(sum(factor_type == "Dl-independent" & type == "CBS") /sum(factor_type == "Dl-independent") ,
+                    sum(factor_type == "Dl-independent" & type == "AT") /sum(factor_type == "Dl-independent"),
+                    sum(factor_type == "Dl-dependent" & type == "CBS") / sum(factor_type == "Dl-dependent"),
+                    sum(factor_type == "Dl-dependent" & type == "AT")/ sum(factor_type == "Dl-dependent")),
+  motif_number = c(sum(factor_type == "Dl-independent" & type == "CBS") ,
+                    sum(factor_type == "Dl-independent" & type == "AT") ,
+                    sum(factor_type == "Dl-dependent" & type == "CBS") ,
+                    sum(factor_type == "Dl-dependent" & type == "AT"))))
+
+
+cic_motif_precent_df$motif_type <- factor(cic_motif_precent_df$motif_type, levels = c("AT", "CBS"))
+cic_motif_precent_df$signal_type <- factor(cic_motif_precent_df$signal_type, levels = c("Dl-independent", "Dl-dependent"))
+
+ggplot(cic_motif_precent_df, aes( x = signal_type, y =motif_percent, fill = motif_type)) + geom_bar(stat = "identity") +
+  xlab("") + ylab("Motif %") + scale_fill_manual(values = c("#F69F47", "#7B504D"))+
+  scale_y_continuous(labels = c(0, 25, 50, 70, 100)) +
+  ggtitle("Cic motif distribution")
+
+```
+
+### Dl Motif distribution
+
+Calculate the distribution of Dl motif at Dorsal-dependent and Dorsal-independent sites. 
+
+```{r dl_motif_distribution}
+dl_motif_cl <- readRDS("rdata/dl_motif_GGRWWTTCC_1_mm_cl.rds")
+
+count_motif <- function(motif1, motif2, upstream, downstream, name){
+  motif1_r <- resize(motif1, upstream + width(motif1), "start") %>% 
+               resize(., 50+width(motif1)+50, "end")
+  strand(motif1_r) <- "*"
+  with_motif <- findOverlaps(query = motif1_r, subject = motif2) %>% 
+                queryHits() %>% unique %>% length()
+  df <- data.frame(sample = name, with_motif = with_motif, total = length(motif1), 
+                   percent = with_motif /length(motif1) )
+  df
+}
+
+dl_dependent_with_dl_motif <- count_motif(cic_low_gd,dl_motif_cl$gr, 50, 50, "Dl-dependent")
+dl_independent_with_dl_motif <- count_motif(cic_high_gd,dl_motif_cl$gr, 50, 50, "Dl-independent")
+
+dl_motif_df <- rbind(dl_independent_with_dl_motif, dl_dependent_with_dl_motif)
+ggplot(dl_motif_df, aes(x= sample, y = percent * 100)) + geom_bar(stat = "identity", fill = "#1F819E") +
+  xlab("") + ylab("with dl motif %")
+```
+
+```{r echo =F}
+sessionInfo()
+```           
