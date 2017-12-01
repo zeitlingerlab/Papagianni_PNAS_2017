@@ -93,6 +93,7 @@ low_gd_df$factor_type <- "Dl-dependent"
 high_gd_df <- mcols(cic_high_gd) %>% as.data.frame
 high_gd_df$factor_type <- "Dl-independent"
 
+
 sig_df <- rbind(low_gd_df, high_gd_df)
 
 ```
@@ -154,7 +155,7 @@ cic_motif_precent_df$motif_type <- factor(cic_motif_precent_df$motif_type, level
 cic_motif_precent_df$signal_type <- factor(cic_motif_precent_df$signal_type, levels = c("Dl-independent", "Dl-dependent"))
 
 ggplot(cic_motif_precent_df, aes( x = signal_type, y =motif_percent, fill = motif_type)) + geom_bar(stat = "identity") +
-  xlab("") + ylab("Motif %") + scale_fill_manual(values = c("#F69F47", "#7B504D"))+
+  xlab("") + ylab("Motif %") + scale_fill_manual(values = c("#E9C598", "#BB8434"))+
   scale_y_continuous(labels = c(0, 25, 50, 70, 100)) +
   ggtitle("Cic motif distribution")
 
@@ -182,7 +183,7 @@ dl_dependent_with_dl_motif <- count_motif(cic_low_gd,dl_motif_cl$gr, 50, 50, "Dl
 dl_independent_with_dl_motif <- count_motif(cic_high_gd,dl_motif_cl$gr, 50, 50, "Dl-independent")
 
 dl_motif_df <- rbind(dl_independent_with_dl_motif, dl_dependent_with_dl_motif)
-ggplot(dl_motif_df, aes(x= sample, y = percent * 100)) + geom_bar(stat = "identity", fill = "#1F819E") +
+ggplot(dl_motif_df, aes(x= sample, y = percent * 100)) + geom_bar(stat = "identity", fill = "#29BCEA") +
   xlab("") + ylab("with dl motif %")
 ```
 

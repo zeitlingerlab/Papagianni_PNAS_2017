@@ -38,52 +38,41 @@ macs2 callpeak -t /papagianni_PNAS_2017/bam/tl10b_dl_chipseq_1.bam /papagianni_P
 ### Process ChIP-seq peaks
 
 ```{r peak_process}
-chipnexus_samples <- list(gd7_cic = "gd7_cic_chipnexus_1", tl_cic = "tl_cic_chipnexus_1", tl_dl ="tl_dl_chipnexus_1")
-
 valid_chr <- c("chr2L", "chr2R", "chr3L", "chr3R", "chr4", "chrX")
+tss_gr <- get(load("rdata/dme_dm6_fb6.17_tss.gr.RData"))
 
 process_peaks <- function(sample){
   summit <- import(paste0("/papagianni_PNAS_2017/analysis/macs2/",sample, "_chipseq_combined_rep_summits.bed"))
-  chipnexus <- chipnexus_samples[sample] %>% load_bigwig()
+  chipnexus <- load_bigwig(paste0(sample, "_chipnexus_1"))
   seqlevels(summit, pruning.mode="coarse") <- valid_chr
   summit$sig <- nexus_regionSums(resize(summit, 101, "center"), chipnexus)
   summit_c <- reduce(resize(summit, 201, "center"))
   summit$overlapping_id <- findOverlaps(query = summit, subject = summit_c) %>% subjectHits
   summit_o <- summit[order(summit$sig, decreasing = T)]
   summit_u <- summit_o[!duplicated(summit_o$overlapping_id)]
-  summit_u
+  summit_tss <- queryHits(findOverlaps(query=summit_u, subject = tss_gr)) %>% unique()
+  summit <- summit_u[-1 * summit_tss]
+  summit
 }
 
-summit_list <- cache("processed_chipseq_summit", function(){
-  mclapply(names(chipnexus_samples), process_peaks, mc.cores = 3)
+dl_summit <- cache("dl_summit", function(){
+  process_peaks("tl_dl")
 })
 
-summit_combined <- lapply(summit_list, function(x){
-  gr_r <- resize(x, 201, "center")
-  mcols(gr_r) <- NULL
-  gr_r}) %>% do.call(c, .) %>% reduce() %>% resize(., 201, "center")
-
 calc_sig <- function(sample, gr){
-  nexus <- chipnexus_samples[sample] %>% load_bigwig()
-
+  nexus <- load_bigwig(sample)
   enrich_df <- data.frame(sig = nexus_regionSums(gr, nexus))
   colnames(enrich_df) <- sample
   enrich_df
 }
 
-sig_df <-  cache("factor_signal_at_combined_summit", function(){
-  mclapply(names(chipnexus_samples), function(x)calc_sig(x,summit_combined ), mc.cores = 3) 
+chipnexus_samples <- list(gd7_cic = "gd7_cic_chipnexus_1", tl_cic = "tl_cic_chipnexus_1", tl_dl ="tl_dl_chipnexus_1")
+
+sig_df <-  cache("factor_signal_at_dl_summit", function(){
+  mclapply(names(chipnexus_samples), function(x)calc_sig(x,resize(dl_summit, 200, "center" )), mc.cores = 3) 
 })%>% do.call(cbind, .)
 
-mcols(summit_combined) <- sig_df
-
-
-tss_gr <- get(load("rdata/dme_dm6_fb6.17_tss.gr.RData"))
-summit_tss <- queryHits(findOverlaps(query=summit_combined, subject = tss_gr)) %>% unique()
-summit_combined <- summit_combined[-1 * summit_tss]
-
-summit_combined$id <- 1:length(summit_combined)
-save(summit_combined, file = "rdata/factor_summit_combined_with_signal.RData")
+mcols(dl_summit) <- sig_df
 ```
 
 ### Prepare known enhancer list
@@ -119,12 +108,12 @@ known_enhancers <- c(regulatory_region.gr, nko_selected_enhancer)
 ```{r factor_signal_at_known_enhancers, fig.height=10, fig.width= 5}
 binding_at_regulatory <- cache("factor_binding_at_enhancer", function(){
   lapply(known_enhancers, function(x){
-        overlap_df <- findOverlaps(x, summit_combined)
+        overlap_df <- findOverlaps(x, dl_summit)
      if(length(overlap_df) != 0){
         enrich_df <- data.frame(gene = x$gene[queryHits(overlap_df)],
-                                gd7_cic = summit_combined$gd7_cic[subjectHits(overlap_df)],
-                                tl_cic = summit_combined$tl_cic[subjectHits(overlap_df)],
-                                tl_dl = summit_combined$tl_dl[subjectHits(overlap_df)])
+                                gd7_cic = dl_summit$gd7_cic[subjectHits(overlap_df)],
+                                tl_cic = dl_summit$tl_cic[subjectHits(overlap_df)],
+                                tl_dl = dl_summit$tl_dl[subjectHits(overlap_df)])
      }else{
         enrich_df <- data.frame(gene = x$gene, 
                                 gd7_cic = 0,
@@ -136,7 +125,22 @@ binding_at_regulatory <- cache("factor_binding_at_enhancer", function(){
   })  %>% do.call(rbind, .)
 })
 
+
+### manually calculate signal for ems, gt and slp1
+ems <- known_enhancers[known_enhancers$gene == "ems"][1] %>% resize(., 200, "center")
+gt <- known_enhancers[known_enhancers$gene == "gt"][5] %>% resize(., 200, "center")
+slp1 <- known_enhancers[known_enhancers$gene == "slp1"][5] %>% resize(., 200, "center")
+
+new_gr <- c(ems, gt, slp1)
+
+new_sig_df<- data.frame(gene = new_gr$gene, 
+                  gd7_cic = nexus_regionSums(new_gr, load_bigwig("gd7_cic_chipnexus_1")),
+                  tl_cic = nexus_regionSums(new_gr, load_bigwig("tl_cic_chipnexus_1")),
+                  tl_dl = nexus_regionSums(new_gr, load_bigwig("tl_dl_chipnexus_1")))
+
+binding_at_regulatory <- rbind(binding_at_regulatory,new_sig_df )
 binding_at_regulatory$sum <- rowSums(binding_at_regulatory[, 2:4])
+
 binding_at_regulatory <- binding_at_regulatory[order(binding_at_regulatory$sum, decreasing = T),]
 selected_ehancer_df <- binding_at_regulatory[!duplicated(binding_at_regulatory$gene),]
 
@@ -156,13 +160,13 @@ cic_df <- subset(selected_ehancer_df_m, variable %in% c("tl_cic", "gd7_cic"))
 dl_df <- subset(selected_ehancer_df_m, variable %in% c("tl_dl"))
 
 ggplot(cic_df, aes(x = variable, y = gene, fill = value)) + geom_tile() +
-  scale_fill_gradient2(high = "firebrick", mid = "peachpuff1", low = "snow",midpoint = 5) +
+  scale_fill_gradient2(high = "firebrick", mid = "peachpuff1", low = "snow",midpoint = 3.8) +
   xlab("") + ylab("Enhancer") + ggtitle("factor binding at known enhancers") +
   scale_x_discrete(labels = c("Cic Toll10b", "Cic gd7")) +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
 ggplot(dl_df, aes(x = variable, y = gene, fill = value)) + geom_tile() +
-  scale_fill_gradient2(high = "dodgerblue4", mid = "slategray1", low = "snow",midpoint = 5) +
+  scale_fill_gradient2(high = "dodgerblue4", mid = "slategray1", low = "snow",midpoint = 3) +
   xlab("") + ylab("Enhancer") + ggtitle("factor binding at known enhancers") +
   scale_x_discrete(labels = c("Dl Toll10b")) +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))  
